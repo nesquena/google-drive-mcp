@@ -7,6 +7,20 @@ import { errorResponse } from '../types.js';
 import { escapeDriveQuery } from '../utils.js';
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const MIME_TYPE_LABELS: Record<string, string> = {
+  'application/vnd.google-apps.document': 'Google Document',
+  'application/vnd.google-apps.spreadsheet': 'Google Spreadsheet',
+  'application/vnd.google-apps.presentation': 'Google Presentation',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Microsoft Word (.docx)',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Microsoft Excel (.xlsx)',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'Microsoft PowerPoint (.pptx)',
+  'application/pdf': 'PDF',
+};
+
+// ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
 
@@ -181,6 +195,32 @@ async function findTextRange(ctx: ToolContext, documentId: string, textToFind: s
     ctx.log('Error finding text in document:', error.message);
     if (error.code === 404) throw new Error(`Document not found (ID: ${documentId})`);
     throw new Error(`Failed to search document: ${error.message}`);
+  }
+}
+
+/**
+ * Check whether a Drive file is a native Google Document.
+ * Non-native files (.docx, .pdf, etc.) cannot be accessed via the Docs API.
+ * Throws with a user-friendly message if the file is not a native Google Doc.
+ */
+async function assertNativeGoogleDoc(
+  ctx: ToolContext,
+  fileId: string,
+): Promise<void> {
+  const fileInfo = await ctx.getDrive().files.get({
+    fileId,
+    fields: 'mimeType,name',
+    supportsAllDrives: true,
+  });
+  const mimeType = fileInfo.data.mimeType;
+  const fileName = fileInfo.data.name || fileId;
+
+  if (mimeType !== 'application/vnd.google-apps.document') {
+    throw new Error(
+      `"${fileName}" is not a native Google Document (actual type: ${mimeType}). ` +
+      `Google Docs API tools only work with native Google Docs. ` +
+      `Use the downloadFile tool to download this file, then process it locally.`
+    );
   }
 }
 
@@ -1531,6 +1571,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       }
       const a = validation.data;
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       const document = await docs.documents.get({ documentId: a.documentId });
 
@@ -1592,6 +1634,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       }
       const a = validation.data;
       const withFormatting = a.includeFormatting === true;
+
+      await assertNativeGoogleDoc(ctx, a.documentId);
 
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       const document = await docs.documents.get({
@@ -1870,6 +1914,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       }
       const a = validation.data;
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
         documentId: a.documentId,
@@ -1900,6 +1946,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
         return errorResponse("endIndex must be greater than startIndex");
       }
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
         documentId: a.documentId,
@@ -1927,6 +1975,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
         return errorResponse(validation.error.errors[0].message);
       }
       const a = validation.data;
+
+      await assertNativeGoogleDoc(ctx, a.documentId);
 
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       const docResponse = await docs.documents.get({
@@ -2042,6 +2092,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       }
       const a = validation.data;
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       // Use includeTabsContent to get the new tabs structure
       const docResponse = await docs.documents.get({
@@ -2129,6 +2181,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       }
       const a = validation.data;
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       let startIndex: number;
       let endIndex: number;
 
@@ -2192,6 +2246,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
         return errorResponse(validation.error.errors[0].message);
       }
       const a = validation.data;
+
+      await assertNativeGoogleDoc(ctx, a.documentId);
 
       let startIndex: number;
       let endIndex: number;
@@ -2267,6 +2323,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       }
       const a = validation.data;
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       let startIndex: number;
       let endIndex: number;
 
@@ -2332,6 +2390,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
         return errorResponse(validation.error.errors[0].message);
       }
       const a = validation.data;
+
+      await assertNativeGoogleDoc(ctx, a.documentId);
 
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
 
@@ -2617,6 +2677,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
         return errorResponse("endIndex must be greater than startIndex");
       }
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       // Get the document to extract quoted text
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       const doc = await docs.documents.get({ documentId: a.documentId });
@@ -2726,6 +2788,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       }
       const a = validation.data;
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       const request_body = {
         insertTable: {
           location: { index: a.index },
@@ -2748,6 +2812,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
         return errorResponse(validation.error.errors[0].message);
       }
       const a = validation.data;
+
+      await assertNativeGoogleDoc(ctx, a.documentId);
 
       // Get the document to find the table structure
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
@@ -2874,6 +2940,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       }
       const a = validation.data;
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       await insertInlineImageHelper(ctx, a.documentId, a.imageUrl, a.index, a.width, a.height);
 
       return {
@@ -2888,6 +2956,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
         return errorResponse(validation.error.errors[0].message);
       }
       const a = validation.data;
+
+      await assertNativeGoogleDoc(ctx, a.documentId);
 
       // Get the document's parent folder if uploadToSameFolder is true
       let parentFolderId: string | undefined;
@@ -2983,10 +3053,12 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       const owner = file.owners?.[0];
       const lastModifier = (file as any).lastModifyingUser;
 
+      const typeLabel = (file.mimeType && MIME_TYPE_LABELS[file.mimeType]) || file.mimeType;
+
       let result = `**Document Information:**\n\n`;
       result += `**Name:** ${file.name}\n`;
       result += `**ID:** ${file.id}\n`;
-      result += `**Type:** Google Document\n`;
+      result += `**Type:** ${typeLabel}\n`;
       result += `**Created:** ${createdDate}\n`;
       result += `**Last Modified:** ${modifiedDate}\n`;
 
@@ -3014,6 +3086,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       if (!validation.success) return errorResponse(validation.error.errors[0].message);
       const a = validation.data;
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
         documentId: a.documentId,
@@ -3029,6 +3103,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       if (!validation.success) return errorResponse(validation.error.errors[0].message);
       const a = validation.data;
 
+      await assertNativeGoogleDoc(ctx, a.documentId);
+
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
         documentId: a.documentId,
@@ -3043,6 +3119,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       const validation = InsertSmartChipSchema.safeParse(args);
       if (!validation.success) return errorResponse(validation.error.errors[0].message);
       const a = validation.data;
+
+      await assertNativeGoogleDoc(ctx, a.documentId);
 
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
@@ -3065,6 +3143,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       const validation = ReadSmartChipsSchema.safeParse(args);
       if (!validation.success) return errorResponse(validation.error.errors[0].message);
       const a = validation.data;
+
+      await assertNativeGoogleDoc(ctx, a.documentId);
 
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       const doc = await docs.documents.get({ documentId: a.documentId });

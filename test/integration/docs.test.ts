@@ -119,6 +119,10 @@ describe('Docs tools', () => {
   beforeEach(() => {
     ctx.mocks.drive.tracker.reset();
     ctx.mocks.docs.tracker.reset();
+    // Most docs tools now check MIME type via Drive API before calling Docs API
+    ctx.mocks.drive.service.files.get._setImpl(async () => ({
+      data: { id: 'doc-1', name: 'Test Doc', mimeType: 'application/vnd.google-apps.document', parents: ['root'] },
+    }));
   });
 
   // --- createGoogleDoc ---
@@ -272,7 +276,7 @@ describe('Docs tools', () => {
       assert.ok(res.content[0].text.includes('Second child'));
       assert.ok(!res.content[0].text.includes('Second tab'));
     });
-    
+
     it('reads specific nested tab by tabId when the document has only one tab with child tabs', async () => {
       ctx.mocks.docs.service.documents.get._setImpl(async () => ({
         data: mockDocs.singleParentNested(),
@@ -314,7 +318,7 @@ describe('Docs tools', () => {
       assert.ok(res.content[0].text.includes('=== Tab: Tab2 ==='));
       assert.ok(res.content[0].text.includes('Second tab'));
     });
-    
+
     it('reads all tabs including nested when no tabId specified and the document has only one tab with child tabs ', async () => {
       ctx.mocks.docs.service.documents.get._setImpl(async () => ({
         data: mockDocs.singleParentNested(),
@@ -1296,6 +1300,34 @@ describe('Docs tools', () => {
 
       const calls = ctx.mocks.docs.tracker.getCalls('documents.batchUpdate');
       assert.equal(calls.length, 2);
+    });
+  });
+
+  // --- MIME type guard (assertNativeGoogleDoc) ---
+  describe('MIME type guard', () => {
+    it('rejects non-native doc with clear error for readGoogleDoc', async () => {
+      ctx.mocks.drive.service.files.get._setImpl(async () => ({
+        data: { id: 'docx-1', name: 'Report.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+      }));
+      const res = await callTool(ctx.client, 'readGoogleDoc', { documentId: 'docx-1' });
+      assert.equal(res.isError, true);
+      assert.ok(res.content[0].text.includes('not a native Google Document'));
+      assert.ok(res.content[0].text.includes('downloadFile'));
+    });
+
+    it('rejects PDF for insertText', async () => {
+      ctx.mocks.drive.service.files.get._setImpl(async () => ({
+        data: { id: 'pdf-1', name: 'Invoice.pdf', mimeType: 'application/pdf' },
+      }));
+      const res = await callTool(ctx.client, 'insertText', { documentId: 'pdf-1', text: 'hello', index: 1 });
+      assert.equal(res.isError, true);
+      assert.ok(res.content[0].text.includes('not a native Google Document'));
+    });
+
+    it('allows native Google Doc through', async () => {
+      // beforeEach already sets up native doc MIME type — just verify it works
+      const res = await callTool(ctx.client, 'readGoogleDoc', { documentId: 'doc-1' });
+      assert.equal(res.isError, false);
     });
   });
 });

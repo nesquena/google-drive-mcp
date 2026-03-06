@@ -10,6 +10,10 @@ describe('Tables & Media tools', () => {
   beforeEach(() => {
     ctx.mocks.drive.tracker.reset();
     ctx.mocks.docs.tracker.reset();
+    // Most docs tools now check MIME type via Drive API before calling Docs API
+    ctx.mocks.drive.service.files.get._setImpl(async () => ({
+      data: { id: 'doc-1', name: 'Test Doc', mimeType: 'application/vnd.google-apps.document', parents: ['root'] },
+    }));
   });
 
   // --- insertTable ---

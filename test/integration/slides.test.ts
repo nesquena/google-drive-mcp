@@ -16,6 +16,10 @@ describe('Slides tools', () => {
     ctx.mocks.slides.service.presentations.batchUpdate._resetImpl();
     ctx.mocks.slides.service.presentations.pages.get._resetImpl();
     ctx.mocks.docs.service.documents.get._resetImpl();
+    // Docs tools now check MIME type via Drive API before calling Docs API
+    ctx.mocks.drive.service.files.get._setImpl(async () => ({
+      data: { id: 'doc-1', name: 'Test Doc', mimeType: 'application/vnd.google-apps.document', parents: ['root'] },
+    }));
   });
 
   // --- createGoogleSlides ---
