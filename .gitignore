@@ -45,3 +45,4 @@ coverage/
 *.temp
 .cache/
 .tmp-test/
+.claude/*
