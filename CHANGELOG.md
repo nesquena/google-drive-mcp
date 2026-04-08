@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.2](https://github.com/piotr-agier/google-drive-mcp/compare/v2.0.1...v2.0.2) (2026-04-04)
+
+### Bug Fixes
+
+- **docs:** use correct API field name for tab creation ([08caa89](https://github.com/piotr-agier/google-drive-mcp/commit/08caa89))
+- use correct API field name for tab properties update ([8a67c75](https://github.com/piotr-agier/google-drive-mcp/commit/8a67c75))
+
+## [2.0.1](https://github.com/piotr-agier/google-drive-mcp/compare/v2.0.0...v2.0.1) (2026-04-01)
+
+### Bug Fixes
+
+- **slides:** skip deleteText for empty speaker notes in Google Slides ([8f02fd1](https://github.com/piotr-agier/google-drive-mcp/commit/8f02fd1))
+
 ## [2.0.0](https://github.com/piotr-agier/google-drive-mcp/compare/v1.7.6...v2.0.0) (2026-03-28)
 
 ### Breaking Changes

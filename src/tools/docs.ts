@@ -3091,8 +3091,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
         documentId: a.documentId,
-        // createTab is not yet in the googleapis TypeScript types — cast required
-        requestBody: { requests: [{ createTab: { tabProperties: { title: a.title } } } as any] }
+        // addDocumentTab is not yet in the googleapis TypeScript types — cast required
+        requestBody: { requests: [{ addDocumentTab: { tabProperties: { title: a.title } } } as any] }
       });
 
       return { content: [{ type: 'text', text: `Requested creation of tab "${a.title}" in document ${a.documentId}.` }], isError: false };
@@ -3108,8 +3108,8 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
         documentId: a.documentId,
-        // updateTabProperties is not yet in the googleapis TypeScript types — cast required
-        requestBody: { requests: [{ updateTabProperties: { tabId: a.tabId, tabProperties: { title: a.title }, fields: 'title' } } as any] }
+        // updateDocumentTabProperties is not yet in the googleapis TypeScript types — cast required
+        requestBody: { requests: [{ updateDocumentTabProperties: { tabId: a.tabId, tabProperties: { title: a.title }, fields: 'title' } } as any] }
       });
 
       return { content: [{ type: 'text', text: `Renamed tab ${a.tabId} to "${a.title}".` }], isError: false };

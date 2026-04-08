@@ -1340,23 +1340,23 @@ export async function handleTool(
       }
 
       // Create the batchUpdate request to replace the speaker notes text
-      const requests = [
-        {
-          deleteText: {
-            objectId: notesObjectId,
-            textRange: {
-              type: 'ALL'
-            }
-          }
-        },
-        {
-          insertText: {
-            objectId: notesObjectId,
-            text: a.notes,
-            insertionIndex: 0
-          }
-        }
-      ];
+      // Only delete existing text if there is any — deleteText with type:'ALL' fails on empty notes
+      const notesPage = slide.slideProperties?.notesPage;
+      const speakerNotesShape = notesPage?.pageElements?.find(
+        (el: any) => el.objectId === notesObjectId
+      );
+      const existingTextElements = speakerNotesShape?.shape?.text?.textElements || [];
+      const hasExistingText = existingTextElements.some(
+        (el: any) => el.textRun?.content
+      );
+
+      const requests: any[] = [];
+
+      if (hasExistingText) {
+        requests.push({ deleteText: { objectId: notesObjectId, textRange: { type: 'ALL' } } });
+      }
+
+      requests.push({ insertText: { objectId: notesObjectId, text: a.notes, insertionIndex: 0 } });
 
       await slidesService.presentations.batchUpdate({
         presentationId: a.presentationId,

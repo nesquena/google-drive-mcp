@@ -291,6 +291,48 @@ describe('Slides tools', () => {
       assert.ok(res.content[0].text.includes('updated speaker notes'));
     });
 
+    it('update slides with existing notes', async () => {
+      const res = await callTool(ctx.client, 'updateGoogleSlidesSpeakerNotes', {
+        presentationId: 'pres-1', slideIndex: 0, notes: 'Updated notes',
+      });
+      assert.equal(res.isError, false);
+
+      const calls = ctx.mocks.slides.tracker.getCalls('presentations.batchUpdate');
+      const requests = calls[calls.length - 1].args[0].requestBody.requests;
+      assert.equal(requests.length, 2);
+      assert.ok(requests[0].deleteText);
+      assert.ok(requests[1].insertText);
+    });
+
+    it('update slides with no existing notes', async () => {
+      ctx.mocks.slides.service.presentations.get._setImpl(async () => ({
+        data: {
+          presentationId: 'pres-1',
+          slides: [{
+            objectId: 'slide-1',
+            slideProperties: {
+              notesPage: {
+                notesProperties: { speakerNotesObjectId: 'notes-1' },
+                pageElements: [
+                  { objectId: 'notes-1', shape: { text: { textElements: [] } } },
+                ],
+              },
+            },
+          }],
+        },
+      }));
+
+      const res = await callTool(ctx.client, 'updateGoogleSlidesSpeakerNotes', {
+        presentationId: 'pres-1', slideIndex: 0, notes: 'First notes',
+      });
+      assert.equal(res.isError, false);
+
+      const calls = ctx.mocks.slides.tracker.getCalls('presentations.batchUpdate');
+      const requests = calls[calls.length - 1].args[0].requestBody.requests;
+      assert.equal(requests.length, 1);
+      assert.ok(requests[0].insertText);
+    });
+
     it('validation error', async () => {
       const res = await callTool(ctx.client, 'updateGoogleSlidesSpeakerNotes', {});
       assert.equal(res.isError, true);
