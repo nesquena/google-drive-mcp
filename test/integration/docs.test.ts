@@ -475,6 +475,33 @@ describe('Docs tools', () => {
       assert.ok(res.content[0].text.includes('found 2 occurrence'));
     });
 
+    it('with tabId scopes replacement via tabsCriteria', async () => {
+      const res = await callTool(ctx.client, 'findAndReplaceInDoc', {
+        documentId: 'doc-1', findText: 'Hello', replaceText: 'Hi', tabId: 'tab-2',
+      });
+      assert.equal(res.isError, false);
+      assert.ok(res.content[0].text.includes('tab-2'));
+
+      const calls = ctx.mocks.docs.tracker.getCalls('documents.batchUpdate');
+      const lastCall = calls[calls.length - 1];
+      const requests = lastCall?.args?.[0]?.requestBody?.requests;
+      assert.equal(requests?.length, 1);
+      assert.deepEqual(requests[0].replaceAllText.tabsCriteria, { tabIds: ['tab-2'] });
+      assert.equal(requests[0].replaceAllText.containsText.text, 'Hello');
+    });
+
+    it('without tabId omits tabsCriteria', async () => {
+      const res = await callTool(ctx.client, 'findAndReplaceInDoc', {
+        documentId: 'doc-1', findText: 'Hello', replaceText: 'Hi',
+      });
+      assert.equal(res.isError, false);
+
+      const calls = ctx.mocks.docs.tracker.getCalls('documents.batchUpdate');
+      const lastCall = calls[calls.length - 1];
+      const requests = lastCall?.args?.[0]?.requestBody?.requests;
+      assert.equal(requests[0].replaceAllText.tabsCriteria, undefined);
+    });
+
     it('validation error', async () => {
       const res = await callTool(ctx.client, 'findAndReplaceInDoc', {});
       assert.equal(res.isError, true);

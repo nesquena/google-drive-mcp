@@ -889,6 +889,7 @@ const FindAndReplaceInDocSchema = z.object({
   replaceText: z.string(),
   matchCase: z.boolean().optional().default(false),
   dryRun: z.boolean().optional().default(false),
+  tabId: z.string().optional(),
 });
 
 const AddDocumentTabSchema = z.object({
@@ -1118,7 +1119,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "findAndReplaceInDoc",
-    description: "Find and replace text across a Google Document. Dry-run mode counts matches from paragraph text only (may differ from actual replacements which cover tables, headers, footers, etc.)",
+    description: "Find and replace text across a Google Document. Dry-run mode counts matches from paragraph text only (may differ from actual replacements which cover tables, headers, footers, etc.). For multi-tab docs, specify tabId to scope replacements to a single tab.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1126,7 +1127,8 @@ export const toolDefinitions: ToolDefinition[] = [
         findText: { type: "string", description: "Text to find" },
         replaceText: { type: "string", description: "Replacement text" },
         matchCase: { type: "boolean", description: "Case-sensitive match (default: false)" },
-        dryRun: { type: "boolean", description: "Only count approximate matches from paragraph text, do not modify document (default: false)" }
+        dryRun: { type: "boolean", description: "Only count approximate matches from paragraph text, do not modify document (default: false). Ignores tabId — always scans the full document body." },
+        tabId: { type: "string", description: "Optional. Tab ID to scope replacements to (from listDocumentTabs). If omitted, replaces across all tabs." }
       },
       required: ["documentId", "findText", "replaceText"]
     }
@@ -2283,26 +2285,26 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
         };
       }
 
+      const replaceAllText: {
+        containsText: { text: string; matchCase: boolean };
+        replaceText: string;
+        tabsCriteria?: { tabIds: string[] };
+      } = {
+        containsText: { text: a.findText, matchCase: a.matchCase },
+        replaceText: a.replaceText,
+      };
+      if (a.tabId) replaceAllText.tabsCriteria = { tabIds: [a.tabId] };
+
       const response = await docs.documents.batchUpdate({
         documentId: a.documentId,
         requestBody: {
-          requests: [
-            {
-              replaceAllText: {
-                containsText: {
-                  text: a.findText,
-                  matchCase: a.matchCase,
-                },
-                replaceText: a.replaceText,
-              },
-            },
-          ],
+          requests: [{ replaceAllText }],
         },
       });
 
       const occurrences = response.data.replies?.[0]?.replaceAllText?.occurrencesChanged ?? 0;
       return {
-        content: [{ type: 'text', text: `Replaced ${occurrences} occurrence(s) of "${a.findText}".` }],
+        content: [{ type: 'text', text: `Replaced ${occurrences} occurrence(s) of "${a.findText}"${a.tabId ? ` in tab ${a.tabId}` : ''}.` }],
         isError: false,
       };
     }
