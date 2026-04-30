@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it, before, after } from 'node:test';
 import { setupTestServer, type TestContext } from '../helpers/setup-server.js';
 
-const EXPECTED_TOOL_COUNT = 99;
+const EXPECTED_TOOL_COUNT = 104;
 
 const EXPECTED_TOOLS = [
   'search', 'createTextFile', 'updateTextFile', 'createFolder', 'listFolder', 'listSharedDrives',
@@ -21,6 +21,7 @@ const EXPECTED_TOOLS = [
   'styleGoogleSlidesShape', 'setGoogleSlidesBackground',
   'createGoogleSlidesTextBox', 'createGoogleSlidesShape',
   'getGoogleSlidesSpeakerNotes', 'updateGoogleSlidesSpeakerNotes', 'deleteGoogleSlide', 'duplicateSlide', 'reorderSlides', 'replaceAllTextInSlides', 'exportSlideThumbnail',
+  'insertSlidesImageFromUrl', 'insertSlidesLocalImage', 'moveSlideElement', 'deleteSlideElement', 'getSlideElementInfo',
   'createShortcut',
   'lockFile', 'unlockFile',
   'uploadFile', 'downloadFile', 'listPermissions', 'addPermission', 'updatePermission', 'removePermission', 'shareFile', 'getRevisions', 'restoreRevision', 'authGetStatus', 'authListScopes', 'authTestFileAccess',

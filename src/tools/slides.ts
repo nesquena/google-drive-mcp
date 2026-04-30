@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import type { slides_v1 } from 'googleapis';
 import type { ToolDefinition, ToolResult, ToolContext } from '../types.js';
 import { errorResponse } from '../types.js';
+import { uploadImageToDrive, deleteDriveFile } from '../utils/driveImageUpload.js';
 
 // ---------------------------------------------------------------------------
 // Zod Schemas
@@ -153,6 +155,95 @@ const ExportSlideThumbnailSchema = z.object({
   mimeType: z.enum(["PNG", "JPEG"]).optional().default("PNG"),
   size: z.enum(["SMALL", "MEDIUM", "LARGE"]).optional().default("LARGE")
 });
+
+const InsertSlidesImageFromUrlSchema = z.object({
+  presentationId: z.string().min(1, "Presentation ID is required"),
+  pageObjectId: z.string().min(1, "Slide/page object ID is required"),
+  imageUrl: z.string().url("A valid image URL is required"),
+  x: z.number().optional().default(0),
+  y: z.number().optional().default(0),
+  width: z.number().optional(),
+  height: z.number().optional(),
+});
+
+const MoveSlideElementSchema = z.object({
+  presentationId: z.string().min(1, "Presentation ID is required"),
+  objectId: z.string().min(1, "Element object ID is required"),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+});
+
+const DeleteSlideElementSchema = z.object({
+  presentationId: z.string().min(1, "Presentation ID is required"),
+  objectId: z.string().min(1, "Element object ID is required"),
+});
+
+const GetSlideElementInfoSchema = z.object({
+  presentationId: z.string().min(1, "Presentation ID is required"),
+  slideObjectId: z.string().optional(),
+});
+
+const InsertSlidesLocalImageSchema = z.object({
+  presentationId: z.string().min(1, "Presentation ID is required"),
+  pageObjectId: z.string().min(1, "Slide/page object ID is required"),
+  localImagePath: z.string().min(1, "Local image path is required"),
+  x: z.number().optional().default(0),
+  y: z.number().optional().default(0),
+  width: z.number().optional(),
+  height: z.number().optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async function insertImageIntoSlide(
+  ctx: ToolContext,
+  presentationId: string,
+  pageObjectId: string,
+  imageUrl: string,
+  x: number,
+  y: number,
+  width?: number,
+  height?: number,
+): Promise<ToolResult> {
+  const slidesService = ctx.google.slides({ version: 'v1', auth: ctx.authClient });
+  const objectId = `img_${uuidv4().substring(0, 8)}`;
+
+  const elementProperties: slides_v1.Schema$PageElementProperties = {
+    pageObjectId,
+    transform: {
+      scaleX: 1,
+      scaleY: 1,
+      translateX: x,
+      translateY: y,
+      unit: 'EMU',
+    },
+  };
+
+  if (width != null && height != null) {
+    elementProperties.size = {
+      width: { magnitude: width, unit: 'EMU' },
+      height: { magnitude: height, unit: 'EMU' },
+    };
+  }
+
+  await slidesService.presentations.batchUpdate({
+    presentationId,
+    requestBody: {
+      requests: [{
+        createImage: { objectId, url: imageUrl, elementProperties },
+      }],
+    },
+  });
+
+  return {
+    content: [{ type: 'text', text: `Inserted image into slide ${pageObjectId} (objectId: ${objectId})` }],
+    isError: false,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Tool Definitions
@@ -470,6 +561,80 @@ export const toolDefinitions: ToolDefinition[] = [
         size: { type: "string", enum: ["SMALL", "MEDIUM", "LARGE"], description: "Thumbnail size" }
       },
       required: ["presentationId", "slideObjectId"]
+    }
+  },
+  {
+    name: "insertSlidesImageFromUrl",
+    description: "Insert an image into a Google Slides slide from a publicly accessible URL",
+    inputSchema: {
+      type: "object",
+      properties: {
+        presentationId: { type: "string", description: "Presentation ID" },
+        pageObjectId: { type: "string", description: "Slide/page object ID to insert the image into" },
+        imageUrl: { type: "string", description: "Publicly accessible URL of the image" },
+        x: { type: "number", description: "X position in EMU (default: 0)" },
+        y: { type: "number", description: "Y position in EMU (default: 0)" },
+        width: { type: "number", description: "Width in EMU (omit to auto-size)" },
+        height: { type: "number", description: "Height in EMU (omit to auto-size)" }
+      },
+      required: ["presentationId", "pageObjectId", "imageUrl"]
+    }
+  },
+  {
+    name: "getSlideElementInfo",
+    description: "Get position, size, and transform of all elements on a slide. Returns actual rendered bounds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        presentationId: { type: "string", description: "Presentation ID" },
+        slideObjectId: { type: "string", description: "Slide object ID (omit to get all slides)" }
+      },
+      required: ["presentationId"]
+    }
+  },
+  {
+    name: "moveSlideElement",
+    description: "Move and/or resize an element (image, text box, shape) on a Google Slides slide",
+    inputSchema: {
+      type: "object",
+      properties: {
+        presentationId: { type: "string", description: "Presentation ID" },
+        objectId: { type: "string", description: "Element object ID to move/resize" },
+        x: { type: "number", description: "New X position in EMU" },
+        y: { type: "number", description: "New Y position in EMU" },
+        width: { type: "number", description: "New width in EMU" },
+        height: { type: "number", description: "New height in EMU" }
+      },
+      required: ["presentationId", "objectId"]
+    }
+  },
+  {
+    name: "deleteSlideElement",
+    description: "Delete an element (image, text box, shape) from a Google Slides slide",
+    inputSchema: {
+      type: "object",
+      properties: {
+        presentationId: { type: "string", description: "Presentation ID" },
+        objectId: { type: "string", description: "Element object ID to delete" }
+      },
+      required: ["presentationId", "objectId"]
+    }
+  },
+  {
+    name: "insertSlidesLocalImage",
+    description: "Upload a local image file to Google Drive and insert it into a Google Slides slide",
+    inputSchema: {
+      type: "object",
+      properties: {
+        presentationId: { type: "string", description: "Presentation ID" },
+        pageObjectId: { type: "string", description: "Slide/page object ID to insert the image into" },
+        localImagePath: { type: "string", description: "Absolute path to the local image file" },
+        x: { type: "number", description: "X position in EMU (default: 0)" },
+        y: { type: "number", description: "Y position in EMU (default: 0)" },
+        width: { type: "number", description: "Width in EMU (omit to auto-size)" },
+        height: { type: "number", description: "Height in EMU (omit to auto-size)" }
+      },
+      required: ["presentationId", "pageObjectId", "localImagePath"]
     }
   },
 ];
@@ -1480,6 +1645,192 @@ export async function handleTool(
         content: [{ type: 'text', text: `Slide thumbnail URL (${a.mimeType}, ${a.size}): ${url}` }],
         isError: false,
       };
+    }
+
+    case "getSlideElementInfo": {
+      const validation = GetSlideElementInfoSchema.safeParse(args);
+      if (!validation.success) return errorResponse(validation.error.errors[0].message);
+      const a = validation.data;
+
+      const slidesService = ctx.google.slides({ version: 'v1', auth: ctx.authClient });
+
+      // Page size lives on the presentation; grab just that field.
+      const sizeOnly = await slidesService.presentations.get({
+        presentationId: a.presentationId,
+        fields: 'pageSize',
+      });
+      const slideWidth = sizeOnly.data.pageSize?.width?.magnitude || 9144000;
+      const slideHeight = sizeOnly.data.pageSize?.height?.magnitude || 6858000;
+
+      // If a specific slide is requested, fetch just that page. Otherwise fetch
+      // only the fields of the slides we actually render.
+      let slides: slides_v1.Schema$Page[] = [];
+      if (a.slideObjectId) {
+        const page = await slidesService.presentations.pages.get({
+          presentationId: a.presentationId,
+          pageObjectId: a.slideObjectId,
+          fields: 'objectId,pageElements(objectId,transform,size,shape/shapeType,image)',
+        });
+        slides = [page.data];
+      } else {
+        const withSlides = await slidesService.presentations.get({
+          presentationId: a.presentationId,
+          fields: 'slides(objectId,pageElements(objectId,transform,size,shape/shapeType,image))',
+        });
+        slides = withSlides.data.slides || [];
+      }
+
+      const lines: string[] = [`Slide dimensions: ${slideWidth} x ${slideHeight} EMU`];
+      for (const slide of slides) {
+        lines.push(`\n--- Slide: ${slide.objectId} ---`);
+        for (const el of slide.pageElements || []) {
+          const t = el.transform || {};
+          const s = el.size || {};
+          const intrW = s.width?.magnitude || 0;
+          const intrH = s.height?.magnitude || 0;
+          const scX = t.scaleX || 1;
+          const scY = t.scaleY || 1;
+          const tx = t.translateX || 0;
+          const ty = t.translateY || 0;
+          const renderedW = intrW * scX;
+          const renderedH = intrH * scY;
+          const right = tx + renderedW;
+          const bottom = ty + renderedH;
+          const offPage = (tx < 0 || ty < 0 || right > slideWidth || bottom > slideHeight)
+            ? ' *** OFF PAGE ***' : '';
+          lines.push(`  ${el.objectId} (${el.shape ? 'shape:' + el.shape.shapeType : el.image ? 'image' : 'other'})`);
+          lines.push(`    intrinsic: ${intrW} x ${intrH}, scale: ${scX} x ${scY}`);
+          lines.push(`    rendered: ${Math.round(renderedW)} x ${Math.round(renderedH)} at (${tx}, ${ty})`);
+          lines.push(`    bounds: right=${Math.round(right)}, bottom=${Math.round(bottom)}${offPage}`);
+        }
+      }
+
+      return { content: [{ type: 'text', text: lines.join('\n') }], isError: false };
+    }
+
+    case "moveSlideElement": {
+      const validation = MoveSlideElementSchema.safeParse(args);
+      if (!validation.success) return errorResponse(validation.error.errors[0].message);
+      const a = validation.data;
+
+      const slidesService = ctx.google.slides({ version: 'v1', auth: ctx.authClient });
+
+      // Field-masked fetch: we only need each element's objectId/transform/size.
+      const pres = await slidesService.presentations.get({
+        presentationId: a.presentationId,
+        fields: 'slides(pageElements(objectId,transform,size))',
+      });
+
+      let currentTransform: slides_v1.Schema$AffineTransform | null = null;
+      let currentSize: slides_v1.Schema$Size | null = null;
+      for (const slide of pres.data.slides || []) {
+        for (const el of slide.pageElements || []) {
+          if (el.objectId === a.objectId) {
+            currentTransform = el.transform || null;
+            currentSize = el.size || null;
+            break;
+          }
+        }
+        if (currentTransform) break;
+      }
+
+      if (!currentTransform) {
+        return errorResponse(`Element ${a.objectId} not found in presentation`);
+      }
+
+      const origWidth = currentSize?.width?.magnitude || 3000000;
+      const origHeight = currentSize?.height?.magnitude || 3000000;
+      const curScaleX = currentTransform.scaleX || 1;
+      const curScaleY = currentTransform.scaleY || 1;
+
+      const newScaleX = a.width !== undefined ? a.width / origWidth : curScaleX;
+      const newScaleY = a.height !== undefined ? a.height / origHeight : curScaleY;
+      const newX = a.x ?? (currentTransform.translateX || 0);
+      const newY = a.y ?? (currentTransform.translateY || 0);
+
+      const newTransform: slides_v1.Schema$AffineTransform = {
+        scaleX: newScaleX,
+        scaleY: newScaleY,
+        translateX: newX,
+        translateY: newY,
+        shearX: currentTransform.shearX || 0,
+        shearY: currentTransform.shearY || 0,
+        unit: 'EMU',
+      };
+
+      const requests: slides_v1.Schema$Request[] = [{
+        updatePageElementTransform: {
+          objectId: a.objectId,
+          applyMode: 'ABSOLUTE',
+          transform: newTransform,
+        },
+      }];
+
+      await slidesService.presentations.batchUpdate({
+        presentationId: a.presentationId,
+        requestBody: { requests },
+      });
+
+      const didResize = a.width !== undefined || a.height !== undefined;
+      const action = didResize ? 'Moved/resized' : 'Moved';
+      return {
+        content: [{ type: 'text', text: `${action} element ${a.objectId} to (${newX}, ${newY})` }],
+        isError: false,
+      };
+    }
+
+    case "deleteSlideElement": {
+      const validation = DeleteSlideElementSchema.safeParse(args);
+      if (!validation.success) return errorResponse(validation.error.errors[0].message);
+      const a = validation.data;
+
+      const slidesService = ctx.google.slides({ version: 'v1', auth: ctx.authClient });
+      await slidesService.presentations.batchUpdate({
+        presentationId: a.presentationId,
+        requestBody: {
+          requests: [{ deleteObject: { objectId: a.objectId } }],
+        },
+      });
+
+      return {
+        content: [{ type: 'text', text: `Deleted element ${a.objectId}` }],
+        isError: false,
+      };
+    }
+
+    case "insertSlidesImageFromUrl": {
+      const validation = InsertSlidesImageFromUrlSchema.safeParse(args);
+      if (!validation.success) return errorResponse(validation.error.errors[0].message);
+      const a = validation.data;
+      return insertImageIntoSlide(ctx, a.presentationId, a.pageObjectId, a.imageUrl, a.x, a.y, a.width, a.height);
+    }
+
+    case "insertSlidesLocalImage": {
+      const validation = InsertSlidesLocalImageSchema.safeParse(args);
+      if (!validation.success) return errorResponse(validation.error.errors[0].message);
+      const a = validation.data;
+
+      // Upload briefly as public so the Slides API can fetch the bytes.
+      const { fileId, webContentLink } = await uploadImageToDrive(ctx, a.localImagePath, {
+        makePublic: true,
+      });
+      try {
+        const result = await insertImageIntoSlide(
+          ctx, a.presentationId, a.pageObjectId, webContentLink,
+          a.x, a.y, a.width, a.height,
+        );
+        // Slides stores its own copy once createImage returns, so the intermediary
+        // Drive file is no longer referenced. Delete it (which also removes the
+        // public permission we just granted).
+        await deleteDriveFile(ctx, fileId).catch((err) =>
+          ctx.log(`insertSlidesLocalImage: failed to delete intermediary Drive file ${fileId}`, err),
+        );
+        return result;
+      } catch (err) {
+        // On embed failure, still try to clean up the uploaded file.
+        await deleteDriveFile(ctx, fileId).catch(() => {});
+        throw err;
+      }
     }
 
     default:

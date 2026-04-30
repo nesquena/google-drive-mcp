@@ -1,10 +1,9 @@
 import { z } from 'zod';
-import { createReadStream, existsSync } from 'fs';
-import { basename, extname } from 'path';
 import JSZip from 'jszip';
 import type { ToolDefinition, ToolContext, ToolResult } from '../types.js';
 import { errorResponse } from '../types.js';
 import { escapeDriveQuery } from '../utils.js';
+import { uploadImageToDrive } from '../utils/driveImageUpload.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -403,87 +402,7 @@ async function insertInlineImageHelper(
   return executeBatchUpdate(ctx, documentId, [request]);
 }
 
-// Upload a local image to Drive and return its URL
-async function uploadImageToDriveHelper(
-  ctx: ToolContext,
-  localFilePath: string,
-  parentFolderId?: string,
-  makePublic: boolean = false
-): Promise<string> {
-  // Verify file exists
-  if (!existsSync(localFilePath)) {
-    throw new Error(`Image file not found: ${localFilePath}`);
-  }
-
-  // Get file name and mime type
-  const fileName = basename(localFilePath);
-  const mimeTypeMap: { [key: string]: string } = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.gif': 'image/gif',
-    '.bmp': 'image/bmp',
-    '.webp': 'image/webp',
-    '.svg': 'image/svg+xml'
-  };
-
-  const ext = extname(localFilePath).toLowerCase();
-  const mimeType = mimeTypeMap[ext] || 'application/octet-stream';
-
-  // Upload file to Drive
-  const fileMetadata: any = {
-    name: fileName,
-    mimeType: mimeType
-  };
-
-  if (parentFolderId) {
-    fileMetadata.parents = [parentFolderId];
-  }
-
-  const media = {
-    mimeType: mimeType,
-    body: createReadStream(localFilePath)
-  };
-
-  const drive = ctx.getDrive();
-
-  const uploadResponse = await drive.files.create({
-    requestBody: fileMetadata,
-    media: media,
-    fields: 'id,webViewLink,webContentLink',
-    supportsAllDrives: true
-  });
-
-  const fileId = uploadResponse.data.id;
-  if (!fileId) {
-    throw new Error('Failed to upload image to Drive - no file ID returned');
-  }
-
-  if (makePublic) {
-    // Make the file publicly readable so the Docs API can fetch it
-    await drive.permissions.create({
-      fileId: fileId,
-      requestBody: {
-        role: 'reader',
-        type: 'anyone'
-      }
-    });
-  }
-
-  // Get the webContentLink
-  const fileInfo = await drive.files.get({
-    fileId: fileId,
-    fields: 'webContentLink',
-    supportsAllDrives: true
-  });
-
-  const webContentLink = fileInfo.data.webContentLink;
-  if (!webContentLink) {
-    throw new Error('Failed to get web content link for uploaded image');
-  }
-
-  return webContentLink;
-}
+// Image upload moved to ../utils/driveImageUpload.ts.
 
 // ---------------------------------------------------------------------------
 // Comment context extraction helpers
@@ -832,7 +751,8 @@ const CreateGoogleDocSchema = z.object({
 
 const UpdateGoogleDocSchema = z.object({
   documentId: z.string().min(1, "Document ID is required"),
-  content: z.string()
+  content: z.string(),
+  tabId: z.string().optional()
 });
 
 const GetGoogleDocContentSchema = z.object({
@@ -843,13 +763,15 @@ const GetGoogleDocContentSchema = z.object({
 const InsertTextSchema = z.object({
   documentId: z.string().min(1, "Document ID is required"),
   text: z.string().min(1, "Text to insert is required"),
-  index: z.number().int().min(1, "Index must be at least 1 (1-based)")
+  index: z.number().int().min(1, "Index must be at least 1 (1-based)"),
+  tabId: z.string().optional()
 });
 
 const DeleteRangeSchema = z.object({
   documentId: z.string().min(1, "Document ID is required"),
   startIndex: z.number().int().min(1, "Start index must be at least 1"),
-  endIndex: z.number().int().min(1, "End index must be at least 1")
+  endIndex: z.number().int().min(1, "End index must be at least 1"),
+  tabId: z.string().optional()
 }).refine(data => data.endIndex > data.startIndex, {
   message: "End index must be greater than start index",
   path: ["endIndex"]
@@ -1008,6 +930,7 @@ const FindAndReplaceInDocSchema = z.object({
   replaceText: z.string(),
   matchCase: z.boolean().optional().default(false),
   dryRun: z.boolean().optional().default(false),
+  tabId: z.string().optional(),
 });
 
 const AddDocumentTabSchema = z.object({
@@ -1061,38 +984,41 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "updateGoogleDoc",
-    description: "Update an existing Google Doc",
+    description: "Update an existing Google Doc (replaces all content). For multi-tab docs, specify tabId to replace a single tab's content atomically; leaves other tabs untouched.",
     inputSchema: {
       type: "object",
       properties: {
         documentId: { type: "string", description: "Doc ID" },
-        content: { type: "string", description: "New content" }
+        content: { type: "string", description: "New content" },
+        tabId: { type: "string", description: "Optional. Tab ID to replace (from listDocumentTabs). If set, delete+insert run in a single atomic batchUpdate scoped to that tab." }
       },
       required: ["documentId", "content"]
     }
   },
   {
     name: "insertText",
-    description: "Insert text at a specific index in a Google Doc (surgical edit, doesn't replace entire doc)",
+    description: "Insert text at a specific index in a Google Doc (surgical edit, doesn't replace entire doc). For multi-tab docs, specify tabId to target a specific tab.",
     inputSchema: {
       type: "object",
       properties: {
         documentId: { type: "string", description: "The document ID" },
         text: { type: "string", description: "Text to insert" },
-        index: { type: "number", description: "Position to insert at (1-based)" }
+        index: { type: "number", description: "Position to insert at (1-based)" },
+        tabId: { type: "string", description: "Optional. Tab ID to insert into (from listDocumentTabs). If omitted, inserts into the first/default tab." }
       },
       required: ["documentId", "text", "index"]
     }
   },
   {
     name: "deleteRange",
-    description: "Delete content between start and end indices in a Google Doc",
+    description: "Delete content between start and end indices in a Google Doc. For multi-tab docs, specify tabId to target a specific tab.",
     inputSchema: {
       type: "object",
       properties: {
         documentId: { type: "string", description: "The document ID" },
         startIndex: { type: "number", description: "Start index (1-based, inclusive)" },
-        endIndex: { type: "number", description: "End index (exclusive)" }
+        endIndex: { type: "number", description: "End index (exclusive)" },
+        tabId: { type: "string", description: "Optional. Tab ID to delete from (from listDocumentTabs). If omitted, deletes from the first/default tab." }
       },
       required: ["documentId", "startIndex", "endIndex"]
     }
@@ -1235,7 +1161,7 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: "findAndReplaceInDoc",
-    description: "Find and replace text across a Google Document. Dry-run mode counts matches from paragraph text only (may differ from actual replacements which cover tables, headers, footers, etc.)",
+    description: "Find and replace text across a Google Document. Dry-run mode counts matches from paragraph text only (may differ from actual replacements which cover tables, headers, footers, etc.). For multi-tab docs, specify tabId to scope replacements to a single tab.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1243,7 +1169,8 @@ export const toolDefinitions: ToolDefinition[] = [
         findText: { type: "string", description: "Text to find" },
         replaceText: { type: "string", description: "Replacement text" },
         matchCase: { type: "boolean", description: "Case-sensitive match (default: false)" },
-        dryRun: { type: "boolean", description: "Only count approximate matches from paragraph text, do not modify document (default: false)" }
+        dryRun: { type: "boolean", description: "Only count approximate matches from paragraph text, do not modify document (default: false). Ignores tabId — always scans the full document body." },
+        tabId: { type: "string", description: "Optional. Tab ID to scope replacements to (from listDocumentTabs). If omitted, replaces across all tabs." }
       },
       required: ["documentId", "findText", "replaceText"]
     }
@@ -1574,6 +1501,50 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       await assertNativeGoogleDoc(ctx, a.documentId);
 
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
+
+      if (a.tabId) {
+        // Tab-scoped path: single atomic batchUpdate so a failed insert can't leave the tab wiped.
+        const document = await docs.documents.get({ documentId: a.documentId, includeTabsContent: true });
+        const tabs = (document.data as any).tabs as any[] | undefined;
+        const tab = tabs ? findTabById(tabs, a.tabId) : null;
+        if (!tab) {
+          return errorResponse(`Tab with ID "${a.tabId}" not found. Use listDocumentTabs to see available tabs.`);
+        }
+
+        const bodyContent = tab.documentTab?.body?.content;
+        const lastEndIndex = bodyContent?.[bodyContent.length - 1]?.endIndex ?? 1;
+        const deleteEndIndex = Math.max(1, lastEndIndex - 1);
+
+        const requests: any[] = [];
+        if (deleteEndIndex > 1) {
+          requests.push({
+            deleteContentRange: {
+              range: { startIndex: 1, endIndex: deleteEndIndex, tabId: a.tabId }
+            }
+          });
+        }
+        requests.push({
+          insertText: { location: { index: 1, tabId: a.tabId }, text: a.content }
+        });
+        requests.push({
+          updateParagraphStyle: {
+            range: { startIndex: 1, endIndex: a.content.length + 1, tabId: a.tabId },
+            paragraphStyle: { namedStyleType: 'NORMAL_TEXT' },
+            fields: 'namedStyleType'
+          }
+        });
+
+        await docs.documents.batchUpdate({
+          documentId: a.documentId,
+          requestBody: { requests }
+        });
+
+        return {
+          content: [{ type: "text", text: `Updated Google Doc: ${document.data.title} (tab: ${a.tabId})` }],
+          isError: false
+        };
+      }
+
       const document = await docs.documents.get({ documentId: a.documentId });
 
       // Delete all content
@@ -1916,13 +1887,16 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
 
       await assertNativeGoogleDoc(ctx, a.documentId);
 
+      const location: { index: number; tabId?: string } = { index: a.index };
+      if (a.tabId) location.tabId = a.tabId;
+
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
         documentId: a.documentId,
         requestBody: {
           requests: [{
             insertText: {
-              location: { index: a.index },
+              location,
               text: a.text
             }
           }]
@@ -1930,7 +1904,7 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       });
 
       return {
-        content: [{ type: "text", text: `Successfully inserted ${a.text.length} characters at index ${a.index}` }],
+        content: [{ type: "text", text: `Successfully inserted ${a.text.length} characters at index ${a.index}${a.tabId ? ` in tab ${a.tabId}` : ''}` }],
         isError: false
       };
     }
@@ -1948,23 +1922,24 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
 
       await assertNativeGoogleDoc(ctx, a.documentId);
 
+      const range: { startIndex: number; endIndex: number; tabId?: string } = {
+        startIndex: a.startIndex,
+        endIndex: a.endIndex
+      };
+      if (a.tabId) range.tabId = a.tabId;
+
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
         documentId: a.documentId,
         requestBody: {
           requests: [{
-            deleteContentRange: {
-              range: {
-                startIndex: a.startIndex,
-                endIndex: a.endIndex
-              }
-            }
+            deleteContentRange: { range }
           }]
         }
       });
 
       return {
-        content: [{ type: "text", text: `Successfully deleted content from index ${a.startIndex} to ${a.endIndex}` }],
+        content: [{ type: "text", text: `Successfully deleted content from index ${a.startIndex} to ${a.endIndex}${a.tabId ? ` in tab ${a.tabId}` : ''}` }],
         isError: false
       };
     }
@@ -2416,26 +2391,26 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
         };
       }
 
+      const replaceAllText: {
+        containsText: { text: string; matchCase: boolean };
+        replaceText: string;
+        tabsCriteria?: { tabIds: string[] };
+      } = {
+        containsText: { text: a.findText, matchCase: a.matchCase },
+        replaceText: a.replaceText,
+      };
+      if (a.tabId) replaceAllText.tabsCriteria = { tabIds: [a.tabId] };
+
       const response = await docs.documents.batchUpdate({
         documentId: a.documentId,
         requestBody: {
-          requests: [
-            {
-              replaceAllText: {
-                containsText: {
-                  text: a.findText,
-                  matchCase: a.matchCase,
-                },
-                replaceText: a.replaceText,
-              },
-            },
-          ],
+          requests: [{ replaceAllText }],
         },
       });
 
       const occurrences = response.data.replies?.[0]?.replaceAllText?.occurrencesChanged ?? 0;
       return {
-        content: [{ type: 'text', text: `Replaced ${occurrences} occurrence(s) of "${a.findText}".` }],
+        content: [{ type: 'text', text: `Replaced ${occurrences} occurrence(s) of "${a.findText}"${a.tabId ? ` in tab ${a.tabId}` : ''}.` }],
         isError: false,
       };
     }
@@ -2971,7 +2946,10 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       }
 
       // Upload the image to Drive
-      const imageUrl = await uploadImageToDriveHelper(ctx, a.localImagePath, parentFolderId, a.makePublic);
+      const { webContentLink: imageUrl } = await uploadImageToDrive(ctx, a.localImagePath, {
+        parentFolderId,
+        makePublic: a.makePublic,
+      });
 
       // Insert the image into the document
       await insertInlineImageHelper(ctx, a.documentId, imageUrl, a.index, a.width, a.height);
@@ -3108,8 +3086,10 @@ export async function handleTool(toolName: string, args: Record<string, unknown>
       const docs = ctx.google.docs({ version: 'v1', auth: ctx.authClient });
       await docs.documents.batchUpdate({
         documentId: a.documentId,
-        // updateDocumentTabProperties is not yet in the googleapis TypeScript types — cast required
-        requestBody: { requests: [{ updateDocumentTabProperties: { tabId: a.tabId, tabProperties: { title: a.title }, fields: 'title' } } as any] }
+        // updateDocumentTabProperties is not yet in the googleapis TypeScript types — cast required.
+        // Per Google Docs API spec: tabId lives INSIDE tabProperties (it's the tab identifier),
+        // and `fields` is a FieldMask for which properties to update (excludes tabId).
+        requestBody: { requests: [{ updateDocumentTabProperties: { tabProperties: { tabId: a.tabId, title: a.title }, fields: 'title' } } as any] }
       });
 
       return { content: [{ type: 'text', text: `Renamed tab ${a.tabId} to "${a.title}".` }], isError: false };

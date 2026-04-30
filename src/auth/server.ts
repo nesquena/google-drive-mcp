@@ -14,14 +14,21 @@ export class AuthServer {
   private app: express.Express;
   private server: http.Server | null = null;
   private tokenManager: TokenManager;
-  private portRange: { start: number; end: number };
+  public readonly portRange: { start: number; end: number };
   public authCompletedSuccessfully = false; // Flag for standalone script
 
   constructor(oauth2Client: OAuth2Client) {
     this.baseOAuth2Client = oauth2Client;
     this.tokenManager = new TokenManager(oauth2Client);
     this.app = express();
-    this.portRange = { start: 3000, end: 3004 };
+    const raw = process.env.GOOGLE_DRIVE_MCP_AUTH_PORT;
+    const portStart = raw ? Number(raw) : 3000;
+    if (!Number.isInteger(portStart) || portStart < 1 || portStart > 65531) {
+      throw new Error(
+        `Invalid GOOGLE_DRIVE_MCP_AUTH_PORT: "${raw}". Must be an integer between 1 and 65531.`
+      );
+    }
+    this.portRange = { start: portStart, end: portStart + 4 };
     this.setupRoutes();
   }
 
